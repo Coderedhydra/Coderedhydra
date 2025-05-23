@@ -1,0 +1,51 @@
+# jules/config/default.yaml
+# Example configuration for Jules Web Security Framework
+
+# Proxy Configuration
+proxy:
+  listen_address: "127.0.0.1"
+  listen_port: 8080
+  # upstream_proxy: "http://user:pass@upstream.example.com:port" # Optional upstream proxy
+  # intercept_https: true # Requires CA certificate management
+
+# Scanner Configuration
+scanner:
+  # Default intensity/speed (e.g., light, medium, aggressive)
+  intensity: "medium"
+  # Max concurrent requests during scanning
+  max_concurrent_requests: 5
+  # User-Agent for scanner requests
+  user_agent: "Jules Security Scanner/0.1"
+  # Specific checks to enable/disable (example)
+  checks:
+    xss:
+      enabled: true
+      # XSS specific settings, e.g., payload lists
+    sqli:
+      enabled: true
+      # SQLi specific settings
+    ssrf:
+      enabled: true
+      # SSRF specific settings
+
+# Crawler Configuration
+crawler:
+  max_depth: 5
+  respect_robots_txt: true
+  # Max concurrent requests during crawling
+  max_concurrent_requests: 3
+  # User-Agent for crawler requests
+  user_agent: "Jules Web Crawler/0.1"
+
+# Reporting Configuration
+reporting:
+  default_format: "json" # json, html
+  output_directory: "./jules_reports"
+
+# UI Configuration (if any needed here)
+ui:
+  theme: "dark" # Example: dark, light
+
+# Global settings
+# timeout_seconds: 30 # Global timeout for HTTP requests
+# log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
