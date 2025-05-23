@@ -1,22 +1,34 @@
 // jules/core/plugin_system.go
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/jules-org/jules/llm" // Import the new LLM package
+)
 
 // ScanPlugin defines the interface for a scanner plugin.
 type ScanPlugin interface {
 	Name() string
 	Description() string
-	RunScan(targetURL string, client *JulesHTTPClient) ([]Issue, error)
+	RunScan(targetURL string, inputCtx *llm.FormInputContext, httpClient *JulesHTTPClient, llmClient llm.JulesLLM) ([]Issue, error)
 }
 
 // Issue represents a vulnerability found by a plugin.
 type Issue struct {
-	Type        string
-	Severity    string
-	URL         string
-	Description string
-	// TODO: Add more details like CWE, evidence, remediation advice
+	Type        string `json:"type"`
+	Severity    string `json:"severity"`
+	URL         string `json:"url"`
+	InputName   string `json:"input_name,omitempty"`   // Name of the parameter/input field, if applicable
+	Description string `json:"description"`
+	Evidence    string `json:"evidence,omitempty"`     // Snippet of response, etc.
+	PayloadUsed string `json:"payload_used,omitempty"` // The payload that triggered the issue
+
+	// LLM-specific details
+	LLMPrompt              string   `json:"llm_prompt,omitempty"`
+	LLMRawResponse         string   `json:"llm_raw_response,omitempty"` // Could be a snippet
+	LLMConfidence          float64  `json:"llm_confidence,omitempty"`
+	LLMPayloadSource       string   `json:"llm_payload_source,omitempty"` // e.g., "generated", "refined_from_kb"
+	ContributingKBArticles []string `json:"contributing_kb_articles,omitempty"` // List of KBArticle IDs that influenced this finding
 }
 
 type PluginManager struct {
@@ -31,19 +43,79 @@ func NewPluginManager() *PluginManager {
 
 func (pm *PluginManager) RegisterPlugin(plugin ScanPlugin) {
 	pm.Plugins = append(pm.Plugins, plugin)
-	fmt.Printf("Registered plugin: %s\n", plugin.Name())
+	fmt.Printf("PLUGIN_MGR: Registered plugin: %s\n", plugin.Name())
 }
 
-func (pm *PluginManager) RunScans(targetURL string, client *JulesHTTPClient) []Issue {
+func (pm *PluginManager) RunScans(targetURL string, contexts []llm.FormInputContext, client *JulesHTTPClient, llmClient llm.JulesLLM) []Issue {
 	var allIssues []Issue
 	for _, plugin := range pm.Plugins {
-		fmt.Printf("Running scan with plugin: %s on %s\n", plugin.Name(), targetURL)
-		issues, err := plugin.RunScan(targetURL, client)
-		if err != nil {
-			fmt.Printf("Error running plugin %s: %v\n", plugin.Name(), err)
-			continue
+		fmt.Printf("PLUGIN_MGR: Running scan with plugin: %s on %s\n", plugin.Name(), targetURL)
+
+		if len(contexts) > 0 {
+			for _, inputCtx := range contexts {
+				fmt.Printf("PLUGIN_MGR:   Targeting input: %s (Type: %s, HTML Context: %s)\n", inputCtx.Name, inputCtx.Type, inputCtx.HtmlContext)
+				issues, err := plugin.RunScan(targetURL, &inputCtx, client, llmClient)
+				if err != nil {
+					fmt.Printf("PLUGIN_MGR: Error running plugin %s on input %s: %v\n", plugin.Name(), inputCtx.Name, err)
+					continue
+				}
+				allIssues = append(allIssues, issues...)
+			}
+		} else {
+			issues, err := plugin.RunScan(targetURL, nil, client, llmClient)
+			if err != nil {
+				fmt.Printf("PLUGIN_MGR: Error running plugin %s on URL %s: %v\n", plugin.Name(), targetURL, err)
+				continue
+			}
+			allIssues = append(allIssues, issues...)
 		}
-		allIssues = append(allIssues, issues...)
 	}
 	return allIssues
+}
+
+// ExampleLLMXSSPlugin (conceptual, kept for context - no changes needed here for this task)
+type ExampleLLMXSSPlugin struct{}
+func (p *ExampleLLMXSSPlugin) Name() string { return "ExampleLLMXSS" }
+func (p *ExampleLLMXSSPlugin) Description() string { return "Uses LLM to generate XSS payloads." }
+func (p *ExampleLLMXSSPlugin) RunScan(targetURL string, inputCtx *llm.FormInputContext, httpClient *JulesHTTPClient, llmClient llm.JulesLLM) ([]Issue, error) {
+	// ... (implementation as before, from previous tasks) ...
+	// If a KB article influenced a payload that led to an issue, its ID would be added to:
+	// issue.ContributingKBArticles = append(issue.ContributingKBArticles, "KB-ID-XXXX")
+	
+	// For the purpose of this example, let's simulate creating an issue that would use these fields.
+	// This is highly conceptual and would depend on actual LLM responses and validation.
+	if inputCtx != nil && llmClient != nil { // Ensure llmClient and inputCtx are not nil
+		// Simulate an LLM call for payload generation
+		payloadReq := llm.LLMRequest{
+			TaskType:     "payload_generation",
+			InputContext: *inputCtx,
+			ScanType:     "xss",
+			KnowledgeBaseHits: []string{"KB-ID-Relevant-XSS-Technique"}, // Example KB hit
+		}
+		payloadRes, err := llmClient.GeneratePayloads(payloadReq)
+		if err == nil && payloadRes != nil && len(payloadRes.GeneratedPayloads) > 0 {
+			// Simulate a successful payload attempt
+			simulatedPayload := payloadRes.GeneratedPayloads[0]
+			// Simulate sending this payload and getting a positive validation
+			// ... (http client interaction logic would be here) ...
+
+			// Create an issue with all the fields
+			exampleIssue := Issue{
+				Type:        "Reflected XSS (Example)",
+				Severity:    "High",
+				URL:         targetURL,
+				InputName:   inputCtx.Name,
+				Description: "This is a sample XSS issue generated by ExampleLLMXSSPlugin.",
+				Evidence:    "<script>alert('example')</script> reflected in response.",
+				PayloadUsed: simulatedPayload,
+				LLMPrompt:   "Prompt used to generate XSS payload for " + inputCtx.Name, // Placeholder
+				LLMRawResponse: "LLM response snippet...", // Placeholder
+				LLMConfidence: payloadRes.ConfidenceScores[0],
+				LLMPayloadSource: "refined_from_kb", // Assuming KB influenced it
+				ContributingKBArticles: []string{"KB-ID-Relevant-XSS-Technique"},
+			}
+			return []Issue{exampleIssue}, nil
+		}
+	}
+	return []Issue{}, nil
 }

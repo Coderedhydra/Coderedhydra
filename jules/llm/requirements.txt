@@ -1,0 +1,8 @@
+# Add Python libraries needed for Qwen/Qwen3-8B-AWQ, e.g.:
+# transformers
+# torch
+# sentencepiece
+# accelerate
+# autoawq # Or other quantization library
+# Placeholder - actual dependencies depend on chosen LLM library
+# For now, it's empty as qwen_model_handler.py uses only standard json/argparse

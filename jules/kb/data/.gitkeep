@@ -1,0 +1,2 @@
+# This file ensures the data/ directory is tracked by Git.
+# Actual knowledge base content (JSON, Markdown, etc.) will be placed here.

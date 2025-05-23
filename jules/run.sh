@@ -5,23 +5,37 @@ set -e
 
 # --- Configuration ---
 TARGET_URL=""
-CLI_ACTION="default_action" # e.g., crawl, scan, proxy, or a default combined action
+CLI_ACTION="default_action" 
 PROXY_PORT="8080"
-SCAN_TYPE="" # xss, sqli, ssrf
+SCAN_TYPE="" 
+PYTHON_EXEC="python3" # Use python3 consistently
+PIP_EXEC="pip3"
+
+# --- Paths ---
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+JULES_CLI_DIR="$SCRIPT_DIR/cli"
+JULES_LLM_DIR="$SCRIPT_DIR/llm"
+JULES_KB_DIR="$SCRIPT_DIR/kb"
+JULES_CORE_DIR="$SCRIPT_DIR/core"
+JULES_UI_DIR="$SCRIPT_DIR/ui"
+JULES_MODEL_PATH_EXPECTED="$SCRIPT_DIR/models/qwen3-8b-awq" # Example expected path
+JULES_KB_DATA_PATH_EXPECTED="$JULES_KB_DIR/data"
+
 
 # --- Helper Functions ---
 print_usage() {
   echo "Usage: $0 --target <URL> [options]"
   echo "Options:"
-  echo "  --target <URL>         Specify the target URL (required for most operations)"
-  echo "  --action <action>      CLI action: crawl, proxy, scan (default: a combined action)"
-  echo "  --proxy-port <port>    Port for the intercepting proxy (default: 8080)"
-  echo "  --scan-type <type>     Type of scan to run (e.g., xss, sqli, ssrf)"
+  echo "  --target <URL>         Specify the target URL"
+  echo "  --action <action>      CLI action: crawl, scan, proxy (default: combined crawl & scan)"
+  echo "  --proxy-port <port>    Port for proxy (default: 8080)"
+  echo "  --scan-type <type>     Scan types (e.g., xss, sqli, all)"
   echo "  --help                 Display this help message"
   exit 1
 }
 
 # --- Parse Command Line Arguments ---
+# (Parsing logic remains the same as before)
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --target) TARGET_URL="$2"; shift ;;
@@ -34,113 +48,103 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-# Validate target URL for relevant actions
-if [[ "$CLI_ACTION" != "proxy" && -z "$TARGET_URL" && "$CLI_ACTION" != "default_action_no_target_needed" ]]; then # Adjust condition as needed
-    echo "Error: --target <URL> is required for the action '$CLI_ACTION'."
-    print_usage
+# --- Prerequisite Checks & Setup Instructions ---
+echo "[+] Checking prerequisites..."
+# Go, Node, Python checks remain the same
+
+# LLM Model Check (Placeholder)
+echo "[!] IMPORTANT: LLM Setup"
+if [ ! -d "$JULES_MODEL_PATH_EXPECTED" ]; then # Basic check, model files might be more complex
+    echo "    LLM model for Qwen/Qwen3-8B-AWQ not found at expected path: $JULES_MODEL_PATH_EXPECTED"
+    echo "    Please download the model and place it there, or update JULES_MODEL_PATH_EXPECTED in this script."
+    echo "    (Actual model loading and path configuration is handled in jules/llm/qwen_model_handler.py and jules/llm/qwen_local_client.go)"
+    # exit 1 # Optional: make this a fatal error
+else
+    echo "    Found presumed LLM model directory at: $JULES_MODEL_PATH_EXPECTED (content not verified by this script)"
+fi
+
+# Knowledge Base Data Check (Placeholder)
+echo "[!] IMPORTANT: Knowledge Base Setup"
+if [ -z \"$(ls -A $JULES_KB_DATA_PATH_EXPECTED/*.json 2>/dev/null)\" ] && [ -z \"$(ls -A $JULES_KB_DATA_PATH_EXPECTED/*.md 2>/dev/null)\" ]; then # Basic check for some data
+    echo "    Knowledge Base data directory $JULES_KB_DATA_PATH_EXPECTED appears to be empty or only has .gitkeep."
+    echo "    Please populate it with vulnerability information (CVEs, OWASP docs, etc.) as per jules/kb/data/README.md."
+    echo "    (Actual KB loading is handled in jules/kb/local_kb_service.go)"
+else
+    echo "    Found Knowledge Base data directory at: $JULES_KB_DATA_PATH_EXPECTED (content not verified by this script)"
 fi
 
 
 # --- Dependency Installation ---
-echo "[+] Checking and installing dependencies..."
-
-# Check for Go
-if ! command -v go &> /dev/null; then
-    echo "Go not found. Please install Go (https://golang.org/doc/install)."
-    # Add instructions or attempt to install if feasible and desired
-    exit 1
-fi
-
-# Check for Node.js/npm
-if ! command -v npm &> /dev/null; then
-    echo "npm not found. Please install Node.js and npm (https://nodejs.org/)."
-    # Add instructions or attempt to install if feasible and desired
-    exit 1
-fi
-
-# Check for Python/pip
-if ! command -v python3 &> /dev/null || ! command -v pip3 &> /dev/null; then
-    echo "Python 3 and pip3 not found. Please install them."
-    # Add instructions or attempt to install if feasible and desired
-    exit 1
-fi
-
 echo "[+] Installing Python dependencies..."
-# Create a virtual environment if desired
-# python3 -m venv .venv
-# source .venv/bin/activate
-# pip3 install -r jules/cli/requirements.txt # Assuming a requirements.txt will be added
+if [ -f "$JULES_CLI_DIR/requirements.txt" ]; then
+    "$PIP_EXEC" install -r "$JULES_CLI_DIR/requirements.txt"
+else
+    echo "    $JULES_CLI_DIR/requirements.txt not found."
+fi
+if [ -f "$JULES_LLM_DIR/requirements.txt" ]; then
+    # Only install if it's not empty, as it's a placeholder now
+    if [ -s "$JULES_LLM_DIR/requirements.txt" ]; then
+        "$PIP_EXEC" install -r "$JULES_LLM_DIR/requirements.txt"
+    else
+        echo "    $JULES_LLM_DIR/requirements.txt is empty, skipping."
+    fi
+else
+    echo "    $JULES_LLM_DIR/requirements.txt not found."
+fi
 
-echo "[+] Installing Go dependencies for core..."
-(cd jules/core && go mod tidy) # Fetches dependencies listed in go.mod
+
+echo "[+] Installing Go dependencies for core, llm, kb..."
+(cd "$JULES_CORE_DIR" && go mod tidy)
+(cd "$JULES_LLM_DIR" && go mod tidy)
+(cd "$JULES_KB_DIR" && go mod tidy)
 
 echo "[+] Installing Node.js dependencies for UI..."
-(cd jules/ui && npm install)
+(cd "$JULES_UI_DIR" && npm install)
 
 
 # --- Build Steps ---
 echo "[+] Building components..."
 
-echo "[+] Building Go core..."
-(cd jules/core && go build -o ../../jules-core .) # Output to top-level for easier access or to a bin/ dir
+echo "[+] Building Go components (core, llm, kb)..."
+# Build them into a bin directory for clarity, or main jules dir.
+# The core 'jules-core' executable isn't clearly defined as a single binary yet.
+# For now, ensure modules can be built/tested.
+mkdir -p "$SCRIPT_DIR/bin" # Ensure bin directory exists
+(cd "$JULES_CORE_DIR" && go build -o "$SCRIPT_DIR/bin/jules-core-module" .) 
+(cd "$JULES_LLM_DIR" && go build -o "$SCRIPT_DIR/bin/jules-llm-module" .)
+(cd "$JULES_KB_DIR" && go build -o "$SCRIPT_DIR/bin/jules-kb-module" .)
+echo "    (Note: Go modules built as placeholders in ./bin/. Actual integration into a single CLI/server TBD.)"
+
 
 echo "[+] Building React UI..."
-(cd jules/ui && npm run build) # Assumes 'build' script in ui/package.json creates a dist/ folder
+(cd "$JULES_UI_DIR" && npm run build)
 
 
 # --- Launch Application ---
-echo "[+] Launching Jules Framework..."
+echo "[+] Launching Jules Framework (Conceptual)..."
+echo "UI launch: cd $JULES_UI_DIR && npm run dev (for dev) or serve $JULES_UI_DIR/dist"
 
-# Example: Launch UI server in the background and then CLI
-# This is a simplified example. Proper process management (e.g., using a process manager like systemd or supervisord for production,
-# or just backgrounding with '&' and managing PIDs for a script) is needed for robust operation.
-
-echo "[+] Starting UI server (placeholder)..."
-# (cd jules/ui && npm run dev -- --port 3000) & # Example: Run Vite dev server
-# UI_PID=$!
-# Or serve the build directory:
-# (cd jules/ui/dist && npx http-server -p 3000) &
-# UI_PID=$!
-# echo "UI server started with PID $UI_PID on port 3000 (placeholder)."
-echo "UI launch is placeholder. To run UI: cd jules/ui && npm run dev"
-
-
-echo "[+] Executing CLI command..."
-# Construct the CLI command based on parsed arguments
 CLI_COMMAND_ARGS=()
 if [[ -n "$TARGET_URL" ]]; then
     CLI_COMMAND_ARGS+=(--target "$TARGET_URL")
 fi
+# Add other args like --scan-type, --action etc.
+# ... (argument construction logic as before) ...
 
-if [[ "$CLI_ACTION" == "default_action" && -n "$TARGET_URL" ]]; then
-    echo "Running default action: Crawl and Scan (XSS, SQLi) on $TARGET_URL"
-    # python3 jules/cli/main.py crawl "$TARGET_URL"
-    # python3 jules/cli/main.py scan "$TARGET_URL" --type xss
-    # python3 jules/cli/main.py scan "$TARGET_URL" --type sqli
-    echo "CLI: (Placeholder) Would crawl and scan $TARGET_URL"
-elif [[ "$CLI_ACTION" == "crawl" && -n "$TARGET_URL" ]]; then
-    # python3 jules/cli/main.py crawl "$TARGET_URL"
-    echo "CLI: (Placeholder) Would crawl $TARGET_URL"
-elif [[ "$CLI_ACTION" == "proxy" ]]; then
-    # python3 jules/cli/main.py proxy --port "$PROXY_PORT"
-    echo "CLI: (Placeholder) Would start proxy on port $PROXY_PORT"
-elif [[ "$CLI_ACTION" == "scan" && -n "$TARGET_URL" && -n "$SCAN_TYPE" ]]; then
-    # python3 jules/cli/main.py scan "$TARGET_URL" --type "$SCAN_TYPE"
-    echo "CLI: (Placeholder) Would scan $TARGET_URL for $SCAN_TYPE"
-elif [[ "$CLI_ACTION" == "scan" && -n "$TARGET_URL" && -z "$SCAN_TYPE" ]]; then
-    echo "CLI: (Placeholder) Would run all scans on $TARGET_URL"
-    # python3 jules/cli/main.py scan "$TARGET_URL" --type xss
-    # python3 jules/cli/main.py scan "$TARGET_URL" --type sqli
-    # python3 jules/cli/main.py scan "$TARGET_URL" --type ssrf
-else
-    echo "No specific CLI action specified or missing parameters. See --help."
-    # python3 jules/cli/main.py "${CLI_COMMAND_ARGS[@]}" # Or default help
-fi
+echo "[+] Executing Python CLI (jules/cli/main.py)..."
+# Pass necessary paths to the Python CLI, e.g., for LLM model and KB data
+export JULES_MODEL_PATH="$JULES_MODEL_PATH_EXPECTED"
+export JULES_KB_DATA_PATH="$JULES_KB_DATA_PATH_EXPECTED"
+export JULES_LLM_SCRIPT_DIR="$JULES_LLM_DIR" # For qwen_local_client.go to find qwen_model_handler.py
+export JULES_PYTHON_EXEC="$PYTHON_EXEC"
 
-# --- Cleanup (optional, for background processes) ---
-# trap 'kill $UI_PID; echo "UI server stopped."' EXIT
-# wait $UI_PID # Wait for UI server if it's critical for the script's foreground lifetime
+# Example: how main.py might be called
+# "$PYTHON_EXEC" "$JULES_CLI_DIR/main.py" "${CLI_COMMAND_ARGS[@]}" --action "$CLI_ACTION" --scan-type "$SCAN_TYPE"
+echo "    (Conceptual CLI call - main.py needs to be updated to use these env vars and orchestrate Go components)"
+echo "    Example CLI call for crawling and scanning:"
+echo "    JULES_MODEL_PATH=\"$JULES_MODEL_PATH\" JULES_KB_DATA_PATH=\"$JULES_KB_DATA_PATH\" \\"
+echo "    JULES_LLM_SCRIPT_DIR=\"$JULES_LLM_DIR\" JULES_PYTHON_EXEC=\"$PYTHON_EXEC\" \\"
+echo "    $PYTHON_EXEC $JULES_CLI_DIR/main.py --target $TARGET_URL --action scan --scan-type all"
+
 
 echo "[+] Jules run script finished."
-# Deactivate virtual environment if used
-# deactivate
